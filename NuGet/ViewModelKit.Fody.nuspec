@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+  <metadata minClientVersion="2.8">
+    <version>$version$</version>
+    <developmentDependency>true</developmentDependency>
+    <licenseUrl>https://github.com/ygoe/ViewModelKit/blob/master/LICENSE.txt</licenseUrl>
+    <projectUrl>https://github.com/ygoe/ViewModelKit</projectUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <tags>XAML, WPF, MVVM, INotifyPropertyChanged, DataBinding, ViewModel, ICommand, DelegateCommand, ILWeaving, Cecil</tags>
+    <dependencies>
+      <dependency id="Fody" version="1.29.4"/>
+    </dependencies>
+    <language>en-GB</language>
+  </metadata>
+</package>
