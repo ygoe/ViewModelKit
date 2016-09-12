@@ -216,15 +216,21 @@ namespace ViewModelKit.Fody
 					}
 				}
 
-				foreach (var attr in propDef.CustomAttributes)
+				foreach (var attr in propDef.CustomAttributes.ToList())
 				{
 					if (attr.AttributeType.FullName == dependsOnAttributeName)
 					{
-						string[] sourcePropNames = attr.ConstructorArguments.FirstOrDefault().Value as string[];
-						if (sourcePropNames != null)
+						var sourcePropNamesArgs = attr.ConstructorArguments.FirstOrDefault().Value as CustomAttributeArgument[];
+						if (sourcePropNamesArgs != null)
 						{
-							foreach (string sourcePropName in sourcePropNames)
+							foreach (var sourcePropNameArg in sourcePropNamesArgs)
 							{
+								string sourcePropName = sourcePropNameArg.Value as string;
+								if (sourcePropName == null)
+								{
+									LogError($"Property {propDef.FullName} has an invalid argument for the DependsOn attribute: {sourcePropNameArg.Value}.");
+									continue;
+								}
 								if (typeDef.Properties.Any(p => p.Name == sourcePropName))
 								{
 									Debug.WriteLine($"Property {propDef.Name} depends on property {sourcePropName} by attribute");
