@@ -102,10 +102,6 @@ namespace ViewModelKit.Fody
 						}
 						step++;
 					}
-					else if (step == 2 && instr.OpCode == OpCodes.Ret)
-					{
-						step++;
-					}
 					else if (instr.OpCode == OpCodes.Nop)
 					{
 					}
@@ -114,7 +110,10 @@ namespace ViewModelKit.Fody
 						break;
 					}
 				}
-				if (step != 3) return false;
+				if (step != 2) return false;
+				// NOTE: VS 2013 generates more useless instructions in Debug configuration before
+				//       the final 'ret'; VS 2015 never does that. We can't look at the complete
+				//       method here for compatibility reasons.
 			}
 
 			if (propDef.SetMethod != null)
