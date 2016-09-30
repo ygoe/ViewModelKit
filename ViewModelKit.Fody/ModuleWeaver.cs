@@ -82,6 +82,27 @@ namespace ViewModelKit.Fody
 				var backingFields = new Dictionary<string, FieldReference>();
 				FindAutoProperties(typeDef, dependencies, backingFields);
 				FindDependentProperties(typeDef, dependencies, backingFields);
+
+				// Compute transitive closure over (X => "G:" + Y) and add them to each originating X
+				foreach (var kvp in dependencies)
+				{
+					if (kvp.Key == "*") continue;
+
+					// Iterate by index so we can add new items as we go and also see them again
+					for (int i = 0; i < kvp.Value.Count; i++)
+					{
+						string propName = kvp.Value.ElementAt(i);
+						var transitiveDependent = dependencies.GetValuesOrEmpty(propName.Substring(2));
+						foreach (string transitivePropName in transitiveDependent.Where(n => n.StartsWith("G:")))
+						{
+							if (!kvp.Value.Contains(transitivePropName))
+							{
+								kvp.Value.Add(transitivePropName);
+							}
+						}
+					}
+				}
+
 				FindDependentCommands(typeDef, dependencies, backingFields);
 
 				ProcessProperties(typeDef, dependencies, backingFields);
@@ -150,7 +171,7 @@ namespace ViewModelKit.Fody
 					}
 					else
 					{
-						dependencies.Add("*", "P:" + propDef.Name);
+						dependencies.Add("*", "A:" + propDef.Name);
 					}
 				}
 			}
@@ -169,8 +190,12 @@ namespace ViewModelKit.Fody
 		{
 			foreach (var propDef in typeDef.Properties)
 			{
+				if (propDef.GetMethod == null)
+					continue;   // A set-only property cannot depend on anything
+				if (propDef.IsAutoProperty())
+					continue;   // Auto-properties have their own value and can never depend on anything else
 				if (propDef.HasCustomAttribute(doNotNotifyAttributeName))
-					continue;
+					continue;   // Should not notify anyway, so we can ignore this
 				if (propDef.PropertyType.Resolve().Is(delegateCommandTypeName))
 					continue;
 				Debug.WriteLine($"Testing dependent property {propDef}");
@@ -180,16 +205,16 @@ namespace ViewModelKit.Fody
 				{
 					if (instr.OpCode == OpCodes.Call || instr.OpCode == OpCodes.Callvirt)
 					{
-						var calledGetMethod = instr.Operand as MethodReference;
+						var calledMethod = instr.Operand as MethodReference;
 						// Only consider if the previous instruction was ldarg.0 (this.)
-						if (calledGetMethod != null && instr.Previous?.OpCode == OpCodes.Ldarg_0)
+						if (calledMethod != null && instr.Previous?.OpCode == OpCodes.Ldarg_0)
 						{
 							foreach (var calledPropDef in typeDef.Properties.Where(p => p != propDef))
 							{
-								if (calledGetMethod == calledPropDef.GetMethod)
+								if (calledMethod == calledPropDef.GetMethod)
 								{
 									Debug.WriteLine($"Property {propDef.Name} depends on property {calledPropDef} by call");
-									dependencies.Add(calledPropDef.Name, "P:" + propDef.Name);
+									dependencies.Add(calledPropDef.Name, "G:" + propDef.Name);
 									break;
 								}
 							}
@@ -197,18 +222,18 @@ namespace ViewModelKit.Fody
 					}
 					if (instr.OpCode == OpCodes.Ldfld)
 					{
-						var loadedBackingField = instr.Operand as FieldReference;
+						var loadedField = instr.Operand as FieldReference;
 						// Only consider if the previous instruction was ldarg.0 (this.)
-						if (loadedBackingField != null && instr.Previous?.OpCode == OpCodes.Ldarg_0)
+						if (loadedField != null && instr.Previous?.OpCode == OpCodes.Ldarg_0)
 						{
 							foreach (var calledPropDef in typeDef.Properties.Where(p => p != propDef))
 							{
 								FieldReference propBackingField;
 								if (backingFields.TryGetValue(calledPropDef.Name, out propBackingField) &&
-									loadedBackingField == propBackingField)
+									loadedField == propBackingField)
 								{
 									Debug.WriteLine($"Property {propDef.Name} depends on property {calledPropDef} by ldfld");
-									dependencies.Add(calledPropDef.Name, "P:" + propDef.Name);
+									dependencies.Add(calledPropDef.Name, "G:" + propDef.Name);
 									break;
 								}
 							}
@@ -234,7 +259,7 @@ namespace ViewModelKit.Fody
 								if (typeDef.Properties.Any(p => p.Name == sourcePropName))
 								{
 									Debug.WriteLine($"Property {propDef.Name} depends on property {sourcePropName} by attribute");
-									dependencies.Add(sourcePropName, "P:" + propDef.Name);
+									dependencies.Add(sourcePropName, "G:" + propDef.Name);
 								}
 								else
 								{
@@ -364,12 +389,12 @@ namespace ViewModelKit.Fody
 			CollectionDictionary<string, string> dependencies,
 			Dictionary<string, FieldReference> backingFields)
 		{
-			var knownProperties = new HashSet<string>(dependencies.GetValuesOrEmpty("*").Where(n => n.StartsWith("P:")).Select(n => n.Substring(2)));
+			var knownAutoProperties = new HashSet<string>(dependencies.GetValuesOrEmpty("*").Where(n => n.StartsWith("A:")).Select(n => n.Substring(2)));
 			var knownCommands = new HashSet<string>(dependencies.GetValuesOrEmpty("*").Where(n => n.StartsWith("C:")).Select(n => n.Substring(2)));
 
 			foreach (var propDef in typeDef.Properties)
 			{
-				if (knownProperties.Contains(propDef.Name) ||
+				if (knownAutoProperties.Contains(propDef.Name) ||
 					knownCommands.Contains(propDef.Name))
 				{
 					ProcessViewModelProperty(typeDef, propDef, dependencies, backingFields);
@@ -396,7 +421,7 @@ namespace ViewModelKit.Fody
 			CollectionDictionary<string, string> dependencies,
 			Dictionary<string, FieldReference> backingFields)
 		{
-			// No need to rewrite the non-existent setter, the property can't change anyway
+			// No need to rewrite the non-existent setter, the property can't be changed directly anyway
 			if (propDef.SetMethod == null)
 				return;
 
@@ -628,25 +653,31 @@ namespace ViewModelKit.Fody
 			var il = methodDef.Body.GetILProcessor();
 
 			// Call property changed handler method
-			var changedMethod = typeDef.Methods
-				.FirstOrDefault(m => m.Name == $"On{propDef.Name}Changed" &&
-					!m.IsStatic &&
-					m.ReturnType == typeDef.Module.TypeSystem.Void &&
-					!m.HasParameters &&
-					!m.HasGenericParameters);
-			if (changedMethod == null &&
-				typeDef.Methods.Any(m => m.Name == $"On{propDef.Name}Changed" &&
-					!m.HasCustomAttribute(ignoreUnsupportedSignatureAttributeName)))
+			var changedProperties =
+				new[] { propDef.Name }
+				.Concat(dependencies.GetValuesOrEmpty(propDef.Name).Where(n => n.StartsWith("G:")).Select(n => n.Substring(2)));
+			foreach (string propName in changedProperties)
 			{
-				LogWarning($"Method signature of {typeDef.FullName}.On{propDef.Name}Changed method is unsupported, method is ignored. Use the IgnoreUnsupportedSignature attribute to avoid this warning.");
-			}
-			if (changedMethod != null)
-			{
-				il.Append(il.Create(OpCodes.Ldarg_0));
-				if (changedMethod.IsVirtual)
-					il.Append(il.Create(OpCodes.Callvirt, changedMethod));
-				else
-					il.Append(il.Create(OpCodes.Call, changedMethod));
+				var changedMethod = typeDef.Methods
+					.FirstOrDefault(m => m.Name == $"On{propName}Changed" &&
+						!m.IsStatic &&
+						m.ReturnType == typeDef.Module.TypeSystem.Void &&
+						!m.HasParameters &&
+						!m.HasGenericParameters);
+				if (changedMethod == null &&
+					typeDef.Methods.Any(m => m.Name == $"On{propName}Changed" &&
+						!m.HasCustomAttribute(ignoreUnsupportedSignatureAttributeName)))
+				{
+					LogWarning($"Method signature of {typeDef.FullName}.On{propName}Changed method is unsupported, method is ignored. Use the IgnoreUnsupportedSignature attribute to avoid this warning.");
+				}
+				if (changedMethod != null)
+				{
+					il.Append(il.Create(OpCodes.Ldarg_0));
+					if (changedMethod.IsVirtual)
+						il.Append(il.Create(OpCodes.Callvirt, changedMethod));
+					else
+						il.Append(il.Create(OpCodes.Call, changedMethod));
+				}
 			}
 
 			// Call PropertyChanged event handler for property and all dependent properties
@@ -674,7 +705,10 @@ namespace ViewModelKit.Fody
 			il.Append(il.Create(OpCodes.Br, falseLabel));
 
 			il.Append(trueLabel);
-			var notifyPropNames = dependencies.GetValuesOrEmpty(propDef.Name).Where(n => n.StartsWith("P:")).Select(n => n.Substring(2)).ToList();
+			var notifyPropNames = dependencies.GetValuesOrEmpty(propDef.Name).Where(n => n.StartsWith("A:"))
+				.Concat(dependencies.GetValuesOrEmpty(propDef.Name).Where(n => n.StartsWith("G:")))
+				.Select(n => n.Substring(2))
+				.ToList();
 			notifyPropNames.Insert(0, propDef.Name);
 			notifyPropNames = notifyPropNames.Distinct().ToList();
 			for (int i = 0; i < notifyPropNames.Count; i++)

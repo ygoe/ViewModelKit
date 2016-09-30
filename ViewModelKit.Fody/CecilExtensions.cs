@@ -67,6 +67,17 @@ namespace ViewModelKit.Fody
 		/// Determines whether the property is an auto-implemented property.
 		/// </summary>
 		/// <param name="propDef">The property to check.</param>
+		/// <returns></returns>
+		public static bool IsAutoProperty(this PropertyDefinition propDef)
+		{
+			FieldReference unused;
+			return IsAutoProperty(propDef, out unused);
+		}
+
+		/// <summary>
+		/// Determines whether the property is an auto-implemented property.
+		/// </summary>
+		/// <param name="propDef">The property to check.</param>
 		/// <param name="backingField">The backing field of the property.</param>
 		/// <returns></returns>
 		public static bool IsAutoProperty(this PropertyDefinition propDef, out FieldReference backingField)

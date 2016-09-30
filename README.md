@@ -1,6 +1,6 @@
 # This is an add-in for [Fody](https://github.com/Fody/Fody/)
 
-Makes WPF ViewModel classes smart by default. Implements [INotifyPropertyChanged](https://msdn.microsoft.com/en-us/library/system.componentmodel.inotifypropertychanged.aspx) and DelegateCommands for auto properties at compile time, recognises dependent properties, connects property changed handlers. Supports virtual properties with Entity Famework.
+Makes WPF ViewModel classes smart by default. Implements [INotifyPropertyChanged](https://msdn.microsoft.com/en-us/library/system.componentmodel.inotifypropertychanged.aspx) and DelegateCommands for auto-properties at compile time, recognises dependent properties, connects property changed handlers. Supports virtual properties with Entity Famework.
 
 [Introduction to Fody](https://github.com/Fody/Fody/wiki/SampleUsage) 
 
@@ -172,6 +172,8 @@ Denotes that changes to the property value should not raise the PropertyChanged 
 
 Denotes that the property depends on other properties and the PropertyChanged event should be raised for this property whenever it is raised for the other properties. You can specify multiple property names for the attribute, or add the attribute multiple times.
 
+This is not supported for auto-properties because they have their own value and cannot depend on any other property.
+
 ##### Example
 
     public string LastName { get; set; }
@@ -255,6 +257,8 @@ You can define additional methods in your class that will be picked up by ViewMo
 
 This method may be defined for every property in your class. It will be called after the property value changes and before the PropertyChanged event is raised.
 
+This also works for (transitively) dependent get-only properties, but their Changed method will always be called when the original source property has changed. That is, the Changed method of a get-only property may be called when its value has not actually changed (but possibly might have).
+
 ##### Example
 
     private void OnFirstNameChanged()
@@ -265,6 +269,8 @@ This method may be defined for every property in your class. It will be called a
 ### On*PropertyName*Changing
 
 This method may be defined for every property in your class. It will be called before the property value changes and has the chance to reject or alter the new value. If multiple methods with an acceptable signature exist, any one will be chosen and the others are ignored.
+
+This does not work for dependent get-only properties because their value is computed and changing it cannot be prevented.
 
 ##### Examples
 
@@ -341,7 +347,7 @@ You can define additional properties in your class that will be picked up by Vie
 
 If this property exists, it will be set to true when another property changes, except for properties with the NotModifying attribute (see above). (See also IsLoaded below.) You must set this property to false again at appropriate times, e. g. after persisting the object or reverting the changes.
 
-ViewModelKit only requires the set accessor of this property. The property may be public or private.
+ViewModelKit only requires the set accessor of this property. The property may be public or private. This does not work for dependent get-only properties.
 
 ##### Example
 
