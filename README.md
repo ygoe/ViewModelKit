@@ -20,17 +20,17 @@ https://nuget.org/packages/ViewModelKit.Fody/
 
 For properties:
 
-* Raises the **PropertyChanged** event when the value of an auto-implemented property changes.
-* Also raises the PropertyChanged event for all **dependent properties** that access another notifying property or its backing field in the getter.
-* Calls **On*PropertyName*Changed** methods when the property has changed.
-* Calls **On*PropertyName*Changing** methods before the property has changed, providing the old and new value, with the option to reject or alter the new value.
-* Sets the **IsModified** property to true when another property changes, except when **IsLoaded** is false.
-* Raises the PropertyChanged event and calls other handler methods asynchronously (with `SynchronizationContext.Current.Post()`) if the property is **virtual** and the current instance is of a derived type. This allows Entity Framework to update foreign key/navigation properties in the dynamic proxy before the change events are raised.
+* Raises the <strong>PropertyChanged</strong> event when the value of an auto-implemented property changes.
+* Also raises the PropertyChanged event for all <strong>dependent properties</strong> that access another notifying property or its backing field in the getter.
+* Calls <strong>On<i>PropertyName</i>Changed</strong> methods when the property has changed.
+* Calls <strong>On<i>PropertyName</i>Changing</strong> methods before the property has changed, providing the old and new value, with the option to reject or alter the new value.
+* Sets the <strong>IsModified</strong> property to true when another property changes, except when <strong>IsLoaded</strong> is false.
+* Raises the PropertyChanged event and calls other handler methods asynchronously (with `SynchronizationContext.Current.Post()`) if the property is <strong>virtual</strong> and the current instance is of a derived type. This allows Entity Framework to update foreign key/navigation properties in the dynamic proxy before the change events are raised.
 
 For commands:
 
-* Connects **DelegateCommand** properties with similar-named **On*CommandName*** and **Can*CommandName*** methods.
-* Raises the **CanExecuteChanged** event of all DelegateCommands that depend on a property, i. e. read the property or its backing field in their Can*CommandName* method.
+* Connects <strong>DelegateCommand</strong> properties with similar-named <strong>On<i>CommandName</i></strong> and <strong>Can<i>CommandName</i></strong> methods.
+* Raises the <strong>CanExecuteChanged</strong> event of all DelegateCommands that depend on a property, i. e. read the property or its backing field in their Can<i>CommandName</i> method.
 
 Future ideas are about adding data validation support once I figured out the way I want to use it.
 
@@ -42,112 +42,123 @@ The following example demonstrates how your code is changed and extended at comp
 
 You declare all interfaces so you can use them in your own code. ViewModelKit will not add any interfaces to your classes, it will just provide additional implementation that affects behaviour but not interfaces. See below for additional notes.
 
-    [ViewModel]
-    public class Person : INotifyPropertyChanged
+```cs
+[ViewModel]
+public class Person : INotifyPropertyChanged
+{
+    public event PropertyChangedEventHandler PropertyChanged;
+
+    public string FirstName { get; set; }
+    public string LastName { get; set; }
+    public int Age { get; set; }
+
+    public string FullName => $"{FirstName} {LastName} ({Age})";
+
+    public void OnLastNameChanged()
     {
-        public event PropertyChangedEventHandler PropertyChanged;
-
-        public string FirstName { get; set; }
-        public string LastName { get; set; }
-        public int Age { get; set; }
-
-        public string FullName => $"{FirstName} {LastName} ({Age})";
-
-        public void OnLastNameChanged()
-        {
-            // ...
-        }
-
-        public bool OnAgeChanging(int oldValue, int newValue)
-        {
-            // Age can only increase by 1 at a time, reject other changes
-            return newValue - oldValue <= 1;
-        }
-
-        public DelegateCommand SaveCommand { get; }   // set is optional
-        private bool CanSave() => !string.IsNullOrEmpty(LastName);
-        private void OnSave() { /* ... */ }
+        // ...
     }
+
+    public bool OnAgeChanging(int oldValue, int newValue)
+    {
+        // Age can only increase by 1 at a time, reject other changes
+        return newValue - oldValue <= 1;
+    }
+
+    public DelegateCommand SaveCommand { get; }   // set is optional
+    private bool CanSave() => !string.IsNullOrEmpty(LastName);
+    private void OnSave() { /* ... */ }
+}
+```
 
 ### What gets compiled
 
-The following representation is an approximation of the compiled code. You may look at its exact structure with a .NET decompiler like [ILSpy](http://ilspy.net). In general, all generated method names will have names that cannot conflict with regular C# or VB code, so don’t worry about that.
+The following representation is an approximation of the compiled code. The generated parts are described with a comment. You may look at its exact structure with a .NET decompiler like [ILSpy](http://ilspy.net). In general, all generated method names will have names that cannot conflict with regular C# or VB code, so don’t worry about that.
 
-    public class Person : INotifyPropertyChanged
+```cs
+public class Person : INotifyPropertyChanged
+{
+    public Person()
     {
-        public Person()
-        {
-            TestCommand = new DelegateCommand(OnSave, CanSave);
-        }
-
-        public event PropertyChangedEventHandler PropertyChanged;
-
-        private string firstName;
-        public string FirstName
-        {
-            get { return firstName; }
-            set
-            {
-                if (value != firstName)
-                {
-                    firstName = value;
-                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("FirstName"));
-                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("FullName"));
-                }
-            }
-        }
-
-        private string lastName;
-        public string LastName
-        {
-            get { return lastName; }
-            set
-            {
-                if (value != lastName)
-                {
-                    lastName = value;
-                    OnLastNameChanged();
-                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("LastName"));
-                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("FullName"));
-                    TestCommand.RaiseCanExecuteChanged();
-                }
-            }
-        }
-
-        private int age;
-        public int Age
-        {
-            get { return age; }
-            set
-            {
-                if (value != age)
-                {
-                    if (!OnAgeChanging(age, value))
-                        return;
-                    age = value;
-                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("Age"));
-                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("FullName"));
-                }
-            }
-        }
-
-        public string FullName => $"{FirstName} {LastName} ({Age})";
-
-        public void OnLastNameChanged()
-        {
-            // ...
-        }
-
-        public bool OnAgeChanging(int oldValue, int newValue)
-        {
-            // Age can only increase by 1 at a time, reject other changes
-            return newValue - oldValue <= 1;
-        }
-
-        public DelegateCommand SaveCommand { get; }
-        private bool CanSave() => !string.IsNullOrEmpty(LastName);
-        private void OnSave() { /* ... */ }
+        // GENERATED: Initialising commands, connecting methods by naming convention
+        TestCommand = new DelegateCommand(OnSave, CanSave);
     }
+
+    public event PropertyChangedEventHandler PropertyChanged;
+
+    // The backing field has already been there, it just wasn’t visible in C# code
+    private string firstName;
+    public string FirstName
+    {
+        get { return firstName; }
+        set
+        {
+            // GENERATED: Equality check
+            if (value != firstName)
+            {
+                firstName = value;
+                // GENERATED: Raising the PropertyChanged events
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("FirstName"));
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("FullName"));
+            }
+        }
+    }
+
+    private string lastName;
+    public string LastName
+    {
+        get { return lastName; }
+        set
+        {
+            if (value != lastName)
+            {
+                lastName = value;
+                // GENERATED: Calling other supported methods (described below)
+                OnLastNameChanged();
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("LastName"));
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("FullName"));
+                // GENERATED: Raising the commands’ CanExecuteChanged events
+                TestCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    private int age;
+    public int Age
+    {
+        get { return age; }
+        set
+        {
+            if (value != age)
+            {
+                // GENERATED: Calling other supported methods (described below)
+                if (!OnAgeChanging(age, value))
+                    return;
+                age = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("Age"));
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("FullName"));
+            }
+        }
+    }
+
+    public string FullName => $"{FirstName} {LastName} ({Age})";
+
+    public void OnLastNameChanged()
+    {
+        // ...
+    }
+
+    public bool OnAgeChanging(int oldValue, int newValue)
+    {
+        // Age can only increase by 1 at a time, reject other changes
+        return newValue - oldValue <= 1;
+    }
+
+    public DelegateCommand SaveCommand { get; }
+    private bool CanSave() => !string.IsNullOrEmpty(LastName);
+    private void OnSave() { /* ... */ }
+}
+```
 
 # Attributes
 
@@ -165,8 +176,10 @@ Denotes that changes to the property value should not raise the PropertyChanged 
 
 ##### Example
 
-    [DoNotNotify]
-    public string InternalCode { get; set; }
+```cs
+[DoNotNotify]
+public string InternalCode { get; set; }
+```
 
 ### DependsOnAttribute
 
@@ -176,25 +189,29 @@ This is not supported for auto-properties because they have their own value and 
 
 ##### Example
 
-    public string LastName { get; set; }
+```cs
+public string LastName { get; set; }
 
-    [DependsOn(nameof(LastName))]
-    public string FullName => GetFullName();
+[DependsOn(nameof(LastName))]
+public string FullName => GetFullName();
 
-    // Property access in separate method is not automatically discovered
-    private string GetFullName() => LastName;
+// Property access in separate method is not automatically discovered
+private string GetFullName() => LastName;
+```
 
 You can also apply this attribute to DelegateCommand properties to have their CanExecuteChanged event raised.
 
 ##### Example
 
-    [DependsOn(nameof(LastName))]
-    public DelegateCommand SaveCommand { get; private set; }
+```cs
+[DependsOn(nameof(LastName))]
+public DelegateCommand SaveCommand { get; private set; }
 
-    private bool CanSave() => Validate();
+private bool CanSave() => Validate();
 
-    // Property access in separate method is not automatically discovered
-    private bool Validate() { /* ... */ }
+// Property access in separate method is not automatically discovered
+private bool Validate() { /* ... */ }
+```
 
 ### NotModifyingAttribute
 
@@ -202,11 +219,13 @@ Denotes that changes to the property value should not set the IsModified value (
 
 ##### Example
 
-    public bool IsModified { get; set; }
+```cs
+public bool IsModified { get; set; }
 
-    // Value shall not be saved, so no need to consider the object “unsaved”
-    [NotModifying]
-    public int Comment { get; set; }
+// Value shall not be saved, so no need to consider the object “unsaved”
+[NotModifying]
+public int Comment { get; set; }
+```
 
 ### IgnoreUnsupportedSignatureAttribute
 
@@ -214,17 +233,19 @@ Denotes that the method should be ignored if its signature is unsupported for it
 
 ##### Examples
 
-    public int Age { get; set; }
+```cs
+public int Age { get; set; }
 
-    // Would be used for Age property if it had no return value or parameter
-    [IgnoreUnsupportedSignature]
-    private object OnAgeChanged(bool flag) { /* ... */ }
+// Would be used for Age property if it had no return value or parameter
+[IgnoreUnsupportedSignature]
+private object OnAgeChanged(bool flag) { /* ... */ }
 
-    public DelegateCommand SaveCommand { get; private set; }
+public DelegateCommand SaveCommand { get; private set; }
 
-    // Would be used for SaveCommand if it had a bool return value
-    [IgnoreUnsupportedSignature]
-    private void CanSave() { /* ... */ }
+// Would be used for SaveCommand if it had a bool return value
+[IgnoreUnsupportedSignature]
+private void CanSave() { /* ... */ }
+```
 
 # Provided classes
 
@@ -236,12 +257,14 @@ Provides a base class for automatically implemented view model classes that impl
 
 ##### Example
 
-    public class Person : ViewModelBase
-    {
-        public string FirstName { get; set; }
-        public string LastName { get; set; }
-        public int Age { get; set; }
-    }
+```cs
+public class Person : ViewModelBase
+{
+    public string FirstName { get; set; }
+    public string LastName { get; set; }
+    public int Age { get; set; }
+}
+```
 
 ### DelegateCommand
 
@@ -261,10 +284,12 @@ This also works for (transitively) dependent get-only properties, but their Chan
 
 ##### Example
 
-    private void OnFirstNameChanged()
-    {
-        // ...
-    }
+```cs
+private void OnFirstNameChanged()
+{
+    // ...
+}
+```
 
 ### On*PropertyName*Changing
 
@@ -274,28 +299,30 @@ This does not work for dependent get-only properties because their value is comp
 
 ##### Examples
 
-    // Gets old and new value (simple form)
-    private void OnFirstNameChanging(string oldValue, string newValue)
-    {
-        // ...
-    }
+```cs
+// Gets old and new value (simple form)
+private void OnFirstNameChanging(string oldValue, string newValue)
+{
+    // ...
+}
 
-    // Can alter the new value (ref parameter)
-    private void OnFirstNameChanging(string oldValue, ref string newValue)
-    {
-        newValue = "...";
-    }
+// Can alter the new value (ref parameter)
+private void OnFirstNameChanging(string oldValue, ref string newValue)
+{
+    newValue = "...";
+}
 
-    // Can reject the new value (bool return type)
-    private bool OnFirstNameChanging(string oldValue, string newValue)
-    {
-        // return false to reject the new value and not raise any events
-        return true;
-    }
+// Can reject the new value (bool return type)
+private bool OnFirstNameChanging(string oldValue, string newValue)
+{
+    // return false to reject the new value and not raise any events
+    return true;
+}
 
-    // Can alter and reject the new value
-    private bool OnFirstNameChanging(string oldValue, ref string newValue)
-    ...
+// Can alter and reject the new value
+private bool OnFirstNameChanging(string oldValue, ref string newValue)
+...
+```
 
 ### On*CommandName*
 
@@ -305,17 +332,19 @@ If this method is not defined for a command, the command will be disabled (Deleg
 
 ##### Examples
 
-    public DelegateCommand SaveCommand { get; private set; }
+```cs
+public DelegateCommand SaveCommand { get; private set; }
 
-    private void OnSave()
-    {
-        // ...
-    }
+private void OnSave()
+{
+    // ...
+}
 
-    private void OnSave(object state)
-    {
-        // ...
-    }
+private void OnSave(object state)
+{
+    // ...
+}
+```
 
 ### Can*CommandName*
 
@@ -327,17 +356,19 @@ If this method is not defined for a command, the command will always be executab
 
 ##### Examples
 
-    public DelegateCommand SaveCommand { get; private set; }
+```cs
+public DelegateCommand SaveCommand { get; private set; }
 
-    private bool CanSave()
-    {
-        return true;
-    }
+private bool CanSave()
+{
+    return true;
+}
 
-    private bool CanSave(object state)
-    {
-        return true;
-    }
+private bool CanSave(object state)
+{
+    return true;
+}
+```
 
 # Supported properties
 
@@ -351,7 +382,9 @@ ViewModelKit only requires the set accessor of this property. The property may b
 
 ##### Example
 
-    public bool IsModified { get; set; }
+```cs
+public bool IsModified { get; set; }
+```
 
 ### IsLoaded
 
@@ -361,5 +394,6 @@ ViewModelKit only requires the get accessor of this property. The property may b
 
 ##### Example
 
-    public bool IsLoaded { get; private set; }
-
+```cs
+public bool IsLoaded { get; private set; }
+```
