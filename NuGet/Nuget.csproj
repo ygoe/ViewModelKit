@@ -29,8 +29,8 @@
   <Target Name="ReBuild" DependsOnTargets="NuGetBuild" />
   <Target Name="NuGetBuild" DependsOnTargets="Clean">
     <MakeDir Directories="$(SolutionDir)NuGetBuild" />
-    <Copy SourceFiles="$(SolutionDir)ViewModelKit\bin\$(ConfigurationName)\ViewModelKit.dll" DestinationFolder="$(SolutionDir)NuGetBuild\Lib\net4" />
-    <Copy SourceFiles="$(SolutionDir)ViewModelKit\bin\$(ConfigurationName)\ViewModelKit.xml" DestinationFolder="$(SolutionDir)NuGetBuild\Lib\net4" />
+    <Copy SourceFiles="$(SolutionDir)ViewModelKit\bin\$(ConfigurationName)\ViewModelKit.dll" DestinationFolder="$(SolutionDir)NuGetBuild\Lib\net45" />
+    <Copy SourceFiles="$(SolutionDir)ViewModelKit\bin\$(ConfigurationName)\ViewModelKit.xml" DestinationFolder="$(SolutionDir)NuGetBuild\Lib\net45" />
     <Copy SourceFiles="$(SolutionDir)NuGet\ViewModelKit.Fody.nuspec" DestinationFolder="$(SolutionDir)NuGetBuild" />
     <Copy SourceFiles="$(ProjectDir)install.ps" DestinationFiles="$(SolutionDir)NuGetBuild\Tools\install.ps1" />
     <Copy SourceFiles="$(ProjectDir)uninstall.ps" DestinationFiles="$(SolutionDir)NuGetBuild\Tools\uninstall.ps1" />

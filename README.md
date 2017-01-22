@@ -1,10 +1,10 @@
 # This is an add-in for [Fody](https://github.com/Fody/Fody/)
 
-Makes WPF ViewModel classes smart by default. Implements [INotifyPropertyChanged](https://msdn.microsoft.com/en-us/library/system.componentmodel.inotifypropertychanged.aspx) and DelegateCommands for auto-properties at compile time, recognises dependent properties, connects property changed handlers. Supports virtual properties with Entity Famework.
+Makes WPF ViewModel classes smart by default. Implements [INotifyPropertyChanged](https://msdn.microsoft.com/en-us/library/system.componentmodel.inotifypropertychanged.aspx) and DelegateCommands for auto-properties at compile time, recognises dependent properties, connects property changed handlers, triggers validation. Supports virtual properties with Entity Famework.
 
 [Introduction to Fody](https://github.com/Fody/Fody/wiki/SampleUsage) 
 
-Supported target frameworks: .NET 4.0 (Client profile) or newer
+Supported target frameworks: .NET 4.5 or newer
 
 This library is intended to be used with WPF applications.
 
@@ -32,7 +32,11 @@ For commands:
 * Connects <strong>DelegateCommand</strong> properties with similar-named <strong>On<i>CommandName</i></strong> and <strong>Can<i>CommandName</i></strong> methods.
 * Raises the <strong>CanExecuteChanged</strong> event of all DelegateCommands that depend on a property, i. e. read the property or its backing field in their Can<i>CommandName</i> method.
 
-Future ideas are about adding data validation support once I figured out the way I want to use it.
+For validation:
+
+* Provides a base class implementing <strong>INotifyDataErrorInfo</strong> with <strong>DataAnnotations</strong> support
+* Raises the <strong>ErrorsChanged</strong> event when a property value has changed and validation gave a different result
+* Validation attributes may be defined in the ViewModel or another (Model) class with the same property names
 
 # Example
 
@@ -247,6 +251,10 @@ public DelegateCommand SaveCommand { get; private set; }
 private void CanSave() { /* ... */ }
 ```
 
+### DoNotValidateAttribute
+
+Denotes that changes to the property value should not raise the ErrorsChanged event for this property or perform validation.
+
 # Provided classes
 
 These classes are defined in the ViewModelKit assembly which is automatically referenced by the NuGet package. This reference will be removed and all referenced classes will be copied into your assembly during compilation, so you do not distribute this assembly.
@@ -258,6 +266,8 @@ Provides a base class for automatically implemented view model classes that impl
 ##### Example
 
 ```cs
+using ViewModelKit;
+
 public class Person : ViewModelBase
 {
     public string FirstName { get; set; }
@@ -271,6 +281,63 @@ public class Person : ViewModelBase
 Provides an [ICommand](https://msdn.microsoft.com/en-us/library/system.windows.input.icommand.aspx) implementation which relays the Execute and CanExecute method to the specified delegates.
 
 [Introduction to the DelegateCommand class](http://unclassified.software/source/delegatecommand)
+
+### ValidatingViewModelBase
+
+Provides a base class for automatically implemented view model classes with data validation that implements the INotifyPropertyChanged and INotifyDataErrorInfo interfaces. This is derived from the ViewModelBase class. If your classes derive from this class, validation is performed whenever a property value changes. The base class has additional methods that you may call from your code to raise the ErrorsChanged event for single properties or the entire object manually.
+
+##### Example
+
+```cs
+using ViewModelKit;
+
+public class Person : ValidatingViewModelBase
+{
+    [Required]
+    public string FirstName { get; set; }
+
+    [Required]
+    [MinLength(4)]
+    public string LastName { get; set; }
+
+    [Range(10, 120)]
+    public int Age { get; set; }
+}
+```
+
+In case the validation attributes are not defined in the ViewModel class but e. g. in a Model class, you need to provide this instance through overriding the **PropertyValidationSource** property. You can also override the **ValidatePropertyOverride** method to provide a custom validation implementation.
+
+##### Example
+
+```cs
+using ViewModelKit;
+
+public class Person
+{
+    [Required]
+    public string FirstName { get; set; }
+
+    [Required]
+    [MinLength(4)]
+    public string LastName { get; set; }
+
+    [Range(10, 120)]
+    public int Age { get; set; }
+}
+
+public class PersonViewModel : ValidatingViewModelBase
+{
+    private Person person;
+
+    protected override object PropertyValidationInstance => person;
+
+    public string FirstName { get; set; }
+    public string LastName { get; set; }
+    public string Age { get; set; }
+
+    // Load and save methods to connect with the model instance...
+}
+```
 
 # Supported methods
 
@@ -378,7 +445,7 @@ You can define additional properties in your class that will be picked up by Vie
 
 If this property exists, it will be set to true when another property changes, except for properties with the NotModifying attribute (see above). (See also IsLoaded below.) You must set this property to false again at appropriate times, e. g. after persisting the object or reverting the changes.
 
-ViewModelKit only requires the set accessor of this property. The property may be public or private. This does not work for dependent get-only properties.
+ViewModelKit only requires the set accessor of this property. The property may be public or private and can be inherited from a base class. This does not work for dependent get-only properties.
 
 ##### Example
 
@@ -390,7 +457,7 @@ public bool IsModified { get; set; }
 
 If this property exists, it will be read before setting IsModified (see above). If IsLoaded is false, IsModified will not be set to true. This can be used to prevent marking the object as modified when all properties are initially set while loading. You must set this property to true when the object has finished loading and future property changes should actually mark the object modified.
 
-ViewModelKit only requires the get accessor of this property. The property may be public or private.
+ViewModelKit only requires the get accessor of this property. The property may be public or private and can be inherited from a base class.
 
 ##### Example
 

@@ -6,7 +6,7 @@
     <licenseUrl>https://github.com/ygoe/ViewModelKit/blob/master/LICENSE.txt</licenseUrl>
     <projectUrl>https://github.com/ygoe/ViewModelKit</projectUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <tags>XAML, WPF, MVVM, INotifyPropertyChanged, DataBinding, ViewModel, ICommand, DelegateCommand, ILWeaving, Cecil</tags>
+    <tags>XAML, WPF, MVVM, INotifyPropertyChanged, DataBinding, ViewModel, ICommand, DelegateCommand, Validation, DataAnnotations, ILWeaving, Cecil</tags>
     <dependencies>
       <dependency id="Fody" version="1.29.4"/>
     </dependencies>

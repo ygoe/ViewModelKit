@@ -19,6 +19,9 @@ namespace ViewModelKit.Fody
 
 		public TypeDefinition ViewModelBaseType;
 		public TypeDefinition DelegateCommandType;
+		public TypeDefinition ValidatingViewModelBaseType;
+		//public TypeDefinition ValidatingObservableCollectionType;   // TODO: Generic types can't be copied yet, see CecilExtensions.CopyToModule
+		public TypeDefinition InputCleanupType;
 		public Dictionary<IMemberDefinition, IMemberDefinition> MemberMap = new Dictionary<IMemberDefinition, IMemberDefinition>();
 
 		private ModuleDefinition moduleDef;
@@ -51,12 +54,20 @@ namespace ViewModelKit.Fody
 
 			equalityComparerDefinition = msCoreTypes.First(x => x.FullName == "System.Collections.Generic.EqualityComparer`1");
 
-			ViewModelKitAssemblyNameReference = moduleDef.AssemblyReferences.First(r => r.Name == "ViewModelKit");
+			ViewModelKitAssemblyNameReference = moduleDef.AssemblyReferences.FirstOrDefault(r => r.Name == "ViewModelKit");
+			if (ViewModelKitAssemblyNameReference == null)
+				throw new Exception("ViewModelKit assembly is not referenced from the processed assembly.");
 			var vmkModuleDef = moduleDef.AssemblyResolver.Resolve(ViewModelKitAssemblyNameReference).MainModule;
 			var oldViewModelBaseType = vmkModuleDef.Types.First(t => t.FullName == "ViewModelKit.ViewModelBase");
 			var oldDelegateCommandType = vmkModuleDef.Types.First(t => t.FullName == "ViewModelKit.DelegateCommand");
+			var oldValidatingViewModelBaseType = vmkModuleDef.Types.First(t => t.FullName == "ViewModelKit.ValidatingViewModelBase");
+			//var oldValidatingObservableCollectionType = vmkModuleDef.Types.First(t => t.FullName == "ViewModelKit.ValidatingObservableCollection`1");
+			var oldInputCleanupType = vmkModuleDef.Types.First(t => t.FullName == "ViewModelKit.InputCleanup");
 			ViewModelBaseType = oldViewModelBaseType.CopyToModule(moduleDef, ref MemberMap, "<VMK>ViewModelBase", "");
 			DelegateCommandType = oldDelegateCommandType.CopyToModule(moduleDef, ref MemberMap, "<VMK>DelegateCommand", "");
+			ValidatingViewModelBaseType = oldValidatingViewModelBaseType.CopyToModule(moduleDef, ref MemberMap, "<VMK>ValidatingViewModelBase", "");
+			//ValidatingObservableCollectionType = oldValidatingObservableCollectionType.CopyToModule(moduleDef, ref MemberMap, "<VMK>ValidatingObservableCollection`1", "");
+			InputCleanupType = oldInputCleanupType.CopyToModule(moduleDef, ref MemberMap, "<VMK>InputCleanup", "");
 		}
 
 		public MethodReference EqualityComparerDefaultReference(TypeReference genericType)

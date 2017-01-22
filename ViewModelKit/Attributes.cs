@@ -52,4 +52,28 @@ namespace ViewModelKit
 	public class IgnoreUnsupportedSignatureAttribute : Attribute
 	{
 	}
+
+	/// <summary>
+	/// Denotes that changes to the property value should not raise the ErrorsChanged event for
+	/// this property or perform validation.
+	/// </summary>
+	[AttributeUsage(AttributeTargets.Property)]
+	public class DoNotValidateAttribute : Attribute
+	{
+	}
+
+	/// <summary>
+	/// Denotes that the new value of the property shall be cleaned up when it's set.
+	/// </summary>
+	[AttributeUsage(AttributeTargets.Property)]
+	public class CleanupAttribute : Attribute
+	{
+		/// <summary>
+		/// Initialises a new instance of the <see cref="CleanupAttribute"/> class.
+		/// </summary>
+		/// <param name="methodName">The cleanup method name.</param>
+		public CleanupAttribute(string methodName)
+		{
+		}
+	}
 }

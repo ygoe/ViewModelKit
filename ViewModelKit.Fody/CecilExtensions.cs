@@ -342,10 +342,25 @@ namespace ViewModelKit.Fody
 			var newType = new TypeDefinition(
 				newNamespace ?? sourceType.Namespace,
 				newName ?? sourceType.Name,
-				sourceType.Attributes,
-				targetModule.ImportReference(sourceType.BaseType));
+				sourceType.Attributes);
 			targetModule.Types.Add(newType);
 			memberMap.Add(sourceType, newType);
+
+			if (sourceType.BaseType != null)
+			{
+				IMemberDefinition baseTypeMemberDef;
+				if (memberMap.TryGetValue(sourceType.BaseType.Resolve(), out baseTypeMemberDef))
+				{
+					newType.BaseType = (TypeDefinition)baseTypeMemberDef;
+					Trace.WriteLine($"- Mapped base type: {newType.BaseType.FullName}");
+				}
+				else
+				{
+					//CopyGenericParameters(sourceType.GenericParameters, newType.GenericParameters, newType, targetModule, ref memberMap);
+					//newType.BaseType = targetModule.ImportReference(sourceType.BaseType, newType);
+					newType.BaseType = targetModule.ImportReference(sourceType.BaseType);
+				}
+			}
 
 			// Copy nested types tree
 			CopyTypes(sourceType, newType, memberMap);
@@ -449,8 +464,10 @@ namespace ViewModelKit.Fody
 			foreach (var propDef in sourceType.Properties)
 			{
 				var newPropDef = (PropertyDefinition)memberMap[propDef];
-				newPropDef.GetMethod = (MethodDefinition)memberMap[propDef.GetMethod];
-				newPropDef.SetMethod = (MethodDefinition)memberMap[propDef.SetMethod];
+				if (propDef.GetMethod != null)
+					newPropDef.GetMethod = (MethodDefinition)memberMap[propDef.GetMethod];
+				if (propDef.SetMethod != null)
+					newPropDef.SetMethod = (MethodDefinition)memberMap[propDef.SetMethod];
 			}
 			foreach (var eventDef in sourceType.Events)
 			{
@@ -602,6 +619,45 @@ namespace ViewModelKit.Fody
 			targetMethod.Body.Instructions.Insert(targetMethod.Body.Instructions.Count - 1, Instruction.Create(pushingPop));
 			targetMethod.Body.Instructions.Insert(targetMethod.Body.Instructions.Count - 1, Instruction.Create(pushingPop));
 			targetMethod.Body.Instructions.Insert(targetMethod.Body.Instructions.Count - 1, Instruction.Create(pushingPop));
+			// Fix handlers for inserted instructions
+			var lastInstr = targetMethod.Body.Instructions[targetMethod.Body.Instructions.Count - 1];
+			foreach (var handler in targetMethod.Body.ExceptionHandlers.Where(h => h.HandlerEnd == lastInstr).ToList())
+			{
+				handler.HandlerEnd = targetMethod.Body.Instructions[targetMethod.Body.Instructions.Count - 9];
+			}
+		}
+
+		// TODO: Currently unused. This is not enough to copy ValidatingObservableCollection`1 to another module.
+		private static void CopyGenericParameters(
+			Mono.Collections.Generic.Collection<GenericParameter> input,
+			Mono.Collections.Generic.Collection<GenericParameter> output,
+			IGenericParameterProvider nt,
+			ModuleDefinition targetModule,
+			ref Dictionary<IMemberDefinition, IMemberDefinition> memberMap)
+		{
+			foreach (GenericParameter gp in input)
+			{
+				GenericParameter ngp = new GenericParameter(gp.Name, nt);
+				ngp.Attributes = gp.Attributes;
+				output.Add(ngp);
+			}
+			// Defer copy to ensure all generic parameters are already present
+			for (int i = 0; i < input.Count; i++)
+			{
+				foreach (TypeReference constraintTypeRef in input[i].Constraints)
+				{
+					IMemberDefinition constraintTypeMemberDef;
+					if (memberMap.TryGetValue(constraintTypeRef.Resolve(), out constraintTypeMemberDef))
+					{
+						output[i].Constraints.Add((TypeDefinition)constraintTypeMemberDef);
+						Trace.WriteLine($"- Mapped generic constraint type: {constraintTypeMemberDef.FullName}");
+					}
+					else
+					{
+						output[i].Constraints.Add(targetModule.ImportReference(constraintTypeRef));
+					}
+				}
+			}
 		}
 
 		#endregion Code copy
@@ -644,30 +700,23 @@ namespace ViewModelKit.Fody
 			}
 			foreach (var methodDef in typeDef.Methods)
 			{
-				foreach (var param in methodDef.Parameters)
-				{
-					var paramTypeDef = param.ParameterType.Resolve();
-					if (paramTypeDef != null)
-					{
-						if (memberMap.TryGetValue(paramTypeDef, out newMemberDef))
-						{
-							param.ParameterType = (TypeReference)newMemberDef;
-						}
-					}
-					UpdateGenericInstance(param.ParameterType as IGenericInstance, memberMap);
-				}
-				var returnTypeDef = methodDef.ReturnType.Resolve();
-				if (returnTypeDef != null)
-				{
-					if (memberMap.TryGetValue(returnTypeDef, out newMemberDef))
-					{
-						methodDef.ReturnType = (TypeReference)newMemberDef;
-					}
-				}
-				UpdateGenericInstance(methodDef.ReturnType as IGenericInstance, memberMap);
+				UpdateMethodSignature(methodDef, memberMap);
 
 				if (methodDef.Body?.Instructions != null)
 				{
+					foreach (var v in methodDef.Body.Variables)
+					{
+						TypeDefinition opTypeDef;
+						if ((opTypeDef = (v.VariableType as TypeReference)?.Resolve()) != null &&
+							memberMap.TryGetValue(opTypeDef, out newMemberDef))
+						{
+							v.VariableType = (TypeReference)newMemberDef;
+						}
+						if (v.VariableType is IGenericInstance)
+						{
+							UpdateGenericInstance(v.VariableType as IGenericInstance, memberMap);
+						}
+					}
 					foreach (var instr in methodDef.Body.Instructions)
 					{
 						TypeDefinition opTypeDef;
@@ -701,13 +750,30 @@ namespace ViewModelKit.Fody
 							instr.Operand = newMemberDef;
 						}
 
-						else if (instr.Operand is IGenericInstance)
+						if (instr.Operand is MethodReference)
+						{
+							UpdateMethodSignature(instr.Operand as MethodReference, memberMap);
+						}
+
+						if (instr.Operand is IGenericInstance)
 						{
 							UpdateGenericInstance(instr.Operand as IGenericInstance, memberMap);
 						}
-						else if ((instr.Operand as MemberReference)?.DeclaringType is IGenericInstance)
+						if ((instr.Operand as MemberReference)?.DeclaringType is IGenericInstance)
 						{
 							UpdateGenericInstance((instr.Operand as MemberReference).DeclaringType as IGenericInstance, memberMap);
+						}
+						if ((instr.Operand as FieldReference)?.FieldType is IGenericInstance)
+						{
+							UpdateGenericInstance((instr.Operand as FieldReference).FieldType as IGenericInstance, memberMap);
+						}
+						if ((instr.Operand as PropertyReference)?.PropertyType is IGenericInstance)
+						{
+							UpdateGenericInstance((instr.Operand as PropertyReference).PropertyType as IGenericInstance, memberMap);
+						}
+						if ((instr.Operand as EventReference)?.EventType is IGenericInstance)
+						{
+							UpdateGenericInstance((instr.Operand as EventReference).EventType as IGenericInstance, memberMap);
 						}
 					}
 				}
@@ -741,6 +807,38 @@ namespace ViewModelKit.Fody
 			{
 				UpdateReferences(nestedTypeDef, memberMap);
 			}
+		}
+
+		/// <summary>
+		/// Updates references in a method signature.
+		/// </summary>
+		/// <param name="methodRef">The method to process.</param>
+		/// <param name="memberMap">A dictionary mapping old to new references.</param>
+		private static void UpdateMethodSignature(this MethodReference methodRef, Dictionary<IMemberDefinition, IMemberDefinition> memberMap)
+		{
+			IMemberDefinition newMemberDef;
+
+			foreach (var param in methodRef.Parameters)
+			{
+				var paramTypeDef = param.ParameterType.Resolve();
+				if (paramTypeDef != null)
+				{
+					if (memberMap.TryGetValue(paramTypeDef, out newMemberDef))
+					{
+						param.ParameterType = (TypeReference)newMemberDef;
+					}
+				}
+				UpdateGenericInstance(param.ParameterType as IGenericInstance, memberMap);
+			}
+			var returnTypeDef = methodRef.ReturnType.Resolve();
+			if (returnTypeDef != null)
+			{
+				if (memberMap.TryGetValue(returnTypeDef, out newMemberDef))
+				{
+					methodRef.ReturnType = (TypeReference)newMemberDef;
+				}
+			}
+			UpdateGenericInstance(methodRef.ReturnType as IGenericInstance, memberMap);
 		}
 
 		/// <summary>

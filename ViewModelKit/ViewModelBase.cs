@@ -8,7 +8,7 @@ namespace ViewModelKit
 	/// <see cref="INotifyPropertyChanged"/> interface.
 	/// </summary>
 	[ViewModel]
-	public class ViewModelBase : INotifyPropertyChanged
+	public abstract class ViewModelBase : INotifyPropertyChanged
 	{
 		/// <summary>
 		/// Occurs when a property value changes.
@@ -19,16 +19,12 @@ namespace ViewModelKit
 		/// Raises the <see cref="PropertyChanged"/> event for a single property. This method will
 		/// not trigger any additional functionality like notifying dependent properties or calling
 		/// property changed handler methods, so it should only be used if automatic notification
-		/// cannot be used.
+		/// cannot be used. This method is not called by generated property implementations.
 		/// </summary>
 		/// <param name="propertyName">The name of the property that changed.</param>
 		protected void OnPropertyChanged(string propertyName)
 		{
-			var handler = PropertyChanged;
-			if (handler != null)
-			{
-				handler(this, new PropertyChangedEventArgs(propertyName));
-			}
+			PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 		}
 	}
 }

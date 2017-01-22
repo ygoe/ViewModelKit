@@ -16,9 +16,12 @@ namespace ViewModelKit.Fody
 		private const string dependsOnAttributeName = "ViewModelKit.DependsOnAttribute";
 		private const string notModifyingAttributeName = "ViewModelKit.NotModifyingAttribute";
 		private const string ignoreUnsupportedSignatureAttributeName = "ViewModelKit.IgnoreUnsupportedSignatureAttribute";
+		private const string doNotValidateAttributeName = "ViewModelKit.DoNotValidateAttribute";
+		private const string cleanupAttributeName = "ViewModelKit.CleanupAttribute";
 
 		private const string viewModelBaseTypeName = "ViewModelKit.ViewModelBase";
 		private const string delegateCommandTypeName = "ViewModelKit.DelegateCommand";
+		private const string validatingViewModelBaseTypeName = "ViewModelKit.ValidatingViewModelBase";
 
 		private const string isModifiedPropertyName = "IsModified";
 		private const string isLoadedPropertyName = "IsLoaded";
@@ -76,6 +79,14 @@ namespace ViewModelKit.Fody
 			{
 				Debug.WriteLine($"Processing type: {typeDef}");
 
+				if (!typeDef.Is("System.ComponentModel.INotifyPropertyChanged"))
+				{
+					LogError($"Type {typeDef.FullName} has the {viewModelAttributeName} attribute but does not implement the INotifyPropertyChanged interface. Type skipped.");
+					return;
+				}
+
+				bool isValidating = typeDef.Is(validatingViewModelBaseTypeName);
+
 				PrepareViewModelType(typeDef);
 
 				var dependencies = new CollectionDictionary<string, string>();
@@ -105,7 +116,7 @@ namespace ViewModelKit.Fody
 
 				FindDependentCommands(typeDef, dependencies, backingFields);
 
-				ProcessProperties(typeDef, dependencies, backingFields);
+				ProcessProperties(typeDef, dependencies, backingFields, isValidating);
 			}
 
 			foreach (var nestedTypeDef in typeDef.NestedTypes)
@@ -141,6 +152,28 @@ namespace ViewModelKit.Fody
 					}
 				}
 				typeDef.BaseType = refs.ViewModelBaseType;
+			}
+			if (typeDef.BaseType.FullName == validatingViewModelBaseTypeName)
+			{
+				foreach (var constructor in typeDef.GetConstructors())
+				{
+					foreach (var instr in constructor.Body.Instructions)
+					{
+						var methodRef = instr.Operand as MethodReference;
+						if (methodRef?.DeclaringType == typeDef.BaseType)
+						{
+							// Replace base class constructor call with copied base class constructor
+							instr.Operand = refs.ValidatingViewModelBaseType.GetConstructors()
+								.Where(c => c.HasParameters == methodRef.HasParameters)
+								.Where(c => !c.HasParameters ||
+									c.Parameters.Select(p => p.ParameterType.FullName).Aggregate((a, b) => a + ";" + b) ==
+										methodRef.Parameters.Select(p => p.ParameterType.FullName).Aggregate((a, b) => a + ";" + b))
+								.First();
+							break;
+						}
+					}
+				}
+				typeDef.BaseType = refs.ValidatingViewModelBaseType;
 			}
 		}
 
@@ -196,7 +229,7 @@ namespace ViewModelKit.Fody
 					continue;   // Auto-properties have their own value and can never depend on anything else
 				if (propDef.HasCustomAttribute(doNotNotifyAttributeName))
 					continue;   // Should not notify anyway, so we can ignore this
-				if (propDef.PropertyType.Resolve().Is(delegateCommandTypeName))
+				if (propDef.PropertyType.Resolve()?.Is(delegateCommandTypeName) == true)
 					continue;
 				Debug.WriteLine($"Testing dependent property {propDef}");
 
@@ -287,10 +320,11 @@ namespace ViewModelKit.Fody
 		{
 			foreach (var propDef in typeDef.Properties)
 			{
-				if (propDef.PropertyType.Resolve().Is(delegateCommandTypeName))
+				if (propDef.PropertyType.Resolve()?.Is(delegateCommandTypeName) == true)
 				{
 					propDef.PropertyType = refs.DelegateCommandType;
-					backingFields[propDef.Name].FieldType = refs.DelegateCommandType;
+					if (backingFields.ContainsKey(propDef.Name))
+						backingFields[propDef.Name].FieldType = refs.DelegateCommandType;
 					if (propDef.GetMethod != null)
 						propDef.GetMethod.ReturnType = refs.DelegateCommandType;
 					if (propDef.SetMethod != null)
@@ -304,8 +338,8 @@ namespace ViewModelKit.Fody
 					var canExecuteMethod = typeDef.Methods
 						.FirstOrDefault(m => m.Name == $"Can{commandName}" &&
 							!m.IsStatic &&
-							m.ReturnType == typeDef.Module.TypeSystem.Boolean &&
-							(!m.HasParameters || m.Parameters.Count == 1 && m.Parameters[0].ParameterType == typeDef.Module.TypeSystem.Object) &&
+							m.ReturnType == ModuleDefinition.TypeSystem.Boolean &&
+							(!m.HasParameters || m.Parameters.Count == 1 && m.Parameters[0].ParameterType == ModuleDefinition.TypeSystem.Object) &&
 							!m.HasGenericParameters);
 					if (canExecuteMethod != null)
 					{
@@ -384,10 +418,12 @@ namespace ViewModelKit.Fody
 		/// <param name="typeDef">The type to process.</param>
 		/// <param name="dependencies">A dictionary containing all found dependencies.</param>
 		/// <param name="backingFields">A dictionary containing all property backing fields.</param>
+		/// <param name="isValidating">Specifies whether this type uses validation.</param>
 		private void ProcessProperties(
 			TypeDefinition typeDef,
 			CollectionDictionary<string, string> dependencies,
-			Dictionary<string, FieldReference> backingFields)
+			Dictionary<string, FieldReference> backingFields,
+			bool isValidating)
 		{
 			var knownAutoProperties = new HashSet<string>(dependencies.GetValuesOrEmpty("*").Where(n => n.StartsWith("A:")).Select(n => n.Substring(2)));
 			var knownCommands = new HashSet<string>(dependencies.GetValuesOrEmpty("*").Where(n => n.StartsWith("C:")).Select(n => n.Substring(2)));
@@ -397,7 +433,7 @@ namespace ViewModelKit.Fody
 				if (knownAutoProperties.Contains(propDef.Name) ||
 					knownCommands.Contains(propDef.Name))
 				{
-					ProcessViewModelProperty(typeDef, propDef, dependencies, backingFields);
+					ProcessViewModelProperty(typeDef, propDef, dependencies, backingFields, isValidating);
 				}
 			}
 
@@ -415,11 +451,13 @@ namespace ViewModelKit.Fody
 		/// <param name="propDef">The property to process.</param>
 		/// <param name="dependencies">A dictionary containing all found dependencies.</param>
 		/// <param name="backingFields">A dictionary containing all property backing fields.</param>
+		/// <param name="isValidating">Specifies whether this type uses validation.</param>
 		private void ProcessViewModelProperty(
 			TypeDefinition typeDef,
 			PropertyDefinition propDef,
 			CollectionDictionary<string, string> dependencies,
-			Dictionary<string, FieldReference> backingFields)
+			Dictionary<string, FieldReference> backingFields,
+			bool isValidating)
 		{
 			// No need to rewrite the non-existent setter, the property can't be changed directly anyway
 			if (propDef.SetMethod == null)
@@ -436,7 +474,7 @@ namespace ViewModelKit.Fody
 			var changingMethod = typeDef.Methods
 				.FirstOrDefault(m => m.Name == $"On{propDef.Name}Changing" &&
 					!m.IsStatic &&
-					(m.ReturnType == typeDef.Module.TypeSystem.Void || m.ReturnType == typeDef.Module.TypeSystem.Boolean) &&
+					(m.ReturnType == ModuleDefinition.TypeSystem.Void || m.ReturnType == ModuleDefinition.TypeSystem.Boolean) &&
 					m.Parameters.Count == 2 &&
 					m.Parameters[0].ParameterType == propDef.PropertyType &&
 					(m.Parameters[1].ParameterType == propDef.PropertyType || (m.Parameters[1].ParameterType as ByReferenceType)?.ElementType == propDef.PropertyType) &&
@@ -458,17 +496,36 @@ namespace ViewModelKit.Fody
 			}
 
 			// Call EqualityComparer<TProperty>.Default.Equals(newValue, GetValue<TProperty>(propertyName)); return if false
-			// call class [mscorlib]System.Collections.Generic.EqualityComparer`1<!0> class [mscorlib]System.Collections.Generic.EqualityComparer`1<!!T>::get_Default()
+			// IL: call class [mscorlib]System.Collections.Generic.EqualityComparer`1<!0> class [mscorlib]System.Collections.Generic.EqualityComparer`1<!!T>::get_Default()
 			il.Append(il.Create(OpCodes.Call, refs.EqualityComparerDefaultReference(propDef.PropertyType)));
 			il.Append(il.Create(OpCodes.Ldarg_1));
 			il.Append(il.Create(OpCodes.Ldarg_0));
 			il.Append(il.Create(OpCodes.Ldfld, backingField));
-			// callvirt instance bool class [mscorlib]System.Collections.Generic.EqualityComparer`1<!!T>::Equals(!0, !0)
+			// IL: callvirt instance bool class [mscorlib]System.Collections.Generic.EqualityComparer`1<!!T>::Equals(!0, !0)
 			var equals = refs.EqualityComparerEqualsReference(propDef.PropertyType);
 			il.Append(il.Create(OpCodes.Callvirt, equals));
 			il.Append(il.Create(OpCodes.Ldc_I4_0));
 			il.Append(il.Create(OpCodes.Ceq));
 			il.Append(il.Create(OpCodes.Brfalse, retInstr));
+
+			// Clean up new value
+			var cleanupAttr = propDef.GetCustomAttribute(cleanupAttributeName);
+			if (cleanupAttr != null)
+			{
+				propDef.CustomAttributes.Remove(cleanupAttr);
+				string cleanupMethodName = cleanupAttr.ConstructorArguments[0].Value.ToString();
+				var cleanupMethod = refs.InputCleanupType.Methods.FirstOrDefault(m => m.Name == cleanupMethodName);
+				if (cleanupMethod == null)
+					throw new InvalidOperationException($"Cleanup method {cleanupMethodName} not found for property {propDef.FullName}.");
+				if (cleanupMethod.HasThis ||
+					cleanupMethod.Parameters.Count != 1 ||
+					cleanupMethod.Parameters[0].ParameterType.FullName != propDef.PropertyType.FullName ||
+					cleanupMethod.ReturnType.FullName != propDef.PropertyType.FullName)
+					throw new InvalidOperationException($"Cleanup method {cleanupMethodName} has incompatible signature for property {propDef.FullName}.");
+				il.Append(il.Create(OpCodes.Ldarg_1));   // value parameter
+				il.Append(il.Create(OpCodes.Call, cleanupMethod));
+				il.Append(il.Create(OpCodes.Starg, 1));   // set value parameter
+			}
 
 			// Call property changing handler method
 			if (changingMethod != null)
@@ -504,8 +561,23 @@ namespace ViewModelKit.Fody
 			}
 			else if (propDef.Name != isModifiedPropertyName && propDef.Name != isLoadedPropertyName)
 			{
-				var isModifiedProperty = typeDef.Properties.FirstOrDefault(p => p.Name == isModifiedPropertyName);
-				var isLoadedProperty = typeDef.Properties.FirstOrDefault(p => p.Name == isLoadedPropertyName);
+				PropertyDefinition isModifiedProperty;
+				var baseType = typeDef;
+				do
+				{
+					isModifiedProperty = baseType.Properties.FirstOrDefault(p => p.Name == isModifiedPropertyName);
+					baseType = baseType.BaseType?.Resolve();
+				}
+				while (isModifiedProperty == null && baseType != null);
+
+				PropertyDefinition isLoadedProperty;
+				baseType = typeDef;
+				do
+				{
+					isLoadedProperty = baseType.Properties.FirstOrDefault(p => p.Name == isLoadedPropertyName);
+					baseType = baseType.BaseType?.Resolve();
+				}
+				while (isLoadedProperty == null && baseType != null);
 
 				if (isModifiedProperty != null &&
 					(isModifiedProperty.PropertyType != ModuleDefinition.TypeSystem.Boolean ||
@@ -537,20 +609,45 @@ namespace ViewModelKit.Fody
 					Instruction continueInstr = null;
 					if (isLoadedProperty?.GetMethod != null)
 					{
-						// if !IsLoaded, skip following code
+						// C#: if (!IsLoaded) skip following code
 						il.Append(il.Create(OpCodes.Ldarg_0));
-						il.Append(il.Create(OpCodes.Call, isLoadedProperty.GetMethod));
+						if (isLoadedProperty.GetMethod.IsVirtual)
+							il.Append(il.Create(OpCodes.Callvirt, isLoadedProperty.GetMethod));
+						else
+							il.Append(il.Create(OpCodes.Call, isLoadedProperty.GetMethod));
 						continueInstr = il.Create(OpCodes.Nop);
 						il.Append(il.Create(OpCodes.Brfalse, continueInstr));
 					}
-					// IsModified = true
+					// C#: IsModified = true
 					il.Append(il.Create(OpCodes.Ldarg_0));
 					il.Append(il.Create(OpCodes.Ldc_I4_1));
-					il.Append(il.Create(OpCodes.Call, isModifiedProperty.SetMethod));
+					if (isModifiedProperty.SetMethod.IsVirtual)
+						il.Append(il.Create(OpCodes.Callvirt, isModifiedProperty.SetMethod));
+					else
+						il.Append(il.Create(OpCodes.Call, isModifiedProperty.SetMethod));
 					if (continueInstr != null)
 					{
 						il.Append(continueInstr);
 					}
+				}
+			}
+
+			// Perform property value validation
+			if (isValidating)
+			{
+				attr = propDef.GetCustomAttribute(doNotValidateAttributeName);
+				if (attr != null)
+				{
+					propDef.CustomAttributes.Remove(attr);
+				}
+				else
+				{
+					il.Append(il.Create(OpCodes.Ldarg_0));
+					il.Append(il.Create(OpCodes.Ldarg_1));   // newValue
+					if (propDef.PropertyType.IsValueType)
+						il.Append(il.Create(OpCodes.Box, propDef.PropertyType));
+					il.Append(il.Create(OpCodes.Ldstr, propDef.Name));
+					il.Append(il.Create(OpCodes.Callvirt, refs.ValidatingViewModelBaseType.Methods.First(m => m.Name == "ValidateProperty")));
 				}
 			}
 
@@ -567,11 +664,11 @@ namespace ViewModelKit.Fody
 					.GetMethod("get_Current", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
 				il.Append(il.Create(OpCodes.Call, ModuleDefinition.ImportReference(getCurrentMethod)));
 
-				// if null, goto sync call
+				// C#: if (null) goto sync call
 				il.Append(il.Create(OpCodes.Dup));
 				il.Append(il.Create(OpCodes.Brfalse, syncCallInstr));
 
-				// GetType() == typeof(propDef)
+				// C#: GetType() == typeof(propDef)
 				il.Append(il.Create(OpCodes.Ldarg_0));
 				var getTypeMethod = typeof(object)
 					.GetMethod("GetType", new Type[0]);
@@ -581,13 +678,13 @@ namespace ViewModelKit.Fody
 					.GetMethod("GetTypeFromHandle", new Type[] { typeof(RuntimeTypeHandle) });
 				il.Append(il.Create(OpCodes.Call, ModuleDefinition.ImportReference(getTypeFromHandleMethod)));
 
-				// if equal, goto sync call
+				// C#: if (equal) goto sync call
 				var typeEqualityMethod = typeof(Type)
 					.GetMethod("op_Equality", new Type[] { typeof(Type), typeof(Type) });
 				il.Append(il.Create(OpCodes.Call, ModuleDefinition.ImportReference(typeEqualityMethod)));
 				il.Append(il.Create(OpCodes.Brtrue, syncCallInstr));
 
-				// Post(...PropertyChanged)
+				// C#: Post(...PropertyChanged)
 				il.Append(il.Create(OpCodes.Ldarg_0));
 				il.Append(il.Create(OpCodes.Ldftn, propertyChangedMethod));
 				var constrMethod = typeof(System.Threading.SendOrPostCallback)
@@ -643,7 +740,7 @@ namespace ViewModelKit.Fody
 			var methodDef = new MethodDefinition(
 				$"<{propDef.Name}>PropertyChanged",
 				MethodAttributes.Private,
-				typeDef.Module.TypeSystem.Void);
+				ModuleDefinition.TypeSystem.Void);
 			typeDef.Methods.Add(methodDef);
 			AddCompilerGeneratedAttribute(methodDef);
 
@@ -661,7 +758,7 @@ namespace ViewModelKit.Fody
 				var changedMethod = typeDef.Methods
 					.FirstOrDefault(m => m.Name == $"On{propName}Changed" &&
 						!m.IsStatic &&
-						m.ReturnType == typeDef.Module.TypeSystem.Void &&
+						m.ReturnType == ModuleDefinition.TypeSystem.Void &&
 						!m.HasParameters &&
 						!m.HasGenericParameters);
 				if (changedMethod == null &&
@@ -681,58 +778,125 @@ namespace ViewModelKit.Fody
 			}
 
 			// Call PropertyChanged event handler for property and all dependent properties
-			il.Append(il.Create(OpCodes.Ldarg_0));
-			// ldfld class [System]System.ComponentModel.PropertyChangedEventHandler {typeDef}::PropertyChanged
-			FieldReference eventField = typeDef.Fields.FirstOrDefault(x => x.FieldType.IsPropertyChangedEventHandler());
-			TypeDefinition baseType = typeDef;
-			while (eventField == null && baseType.BaseType != null)
-			{
-				baseType = baseType.BaseType.Resolve();
-				eventField = baseType.Fields.FirstOrDefault(x => x.FieldType.IsPropertyChangedEventHandler());
-				if (eventField != null)
-				{
-					var eventFieldDef = eventField.Resolve();
-					eventFieldDef.IsFamily = true;
-				}
-			}
-			il.Append(il.Create(OpCodes.Ldfld, eventField));
-			il.Append(il.Create(OpCodes.Dup));
-			var trueLabel = il.Create(OpCodes.Nop);
-			il.Append(il.Create(OpCodes.Brtrue, trueLabel));
-
-			il.Append(il.Create(OpCodes.Pop));
-			var falseLabel = il.Create(OpCodes.Nop);
-			il.Append(il.Create(OpCodes.Br, falseLabel));
-
-			il.Append(trueLabel);
 			var notifyPropNames = dependencies.GetValuesOrEmpty(propDef.Name).Where(n => n.StartsWith("A:"))
 				.Concat(dependencies.GetValuesOrEmpty(propDef.Name).Where(n => n.StartsWith("G:")))
 				.Select(n => n.Substring(2))
 				.ToList();
 			notifyPropNames.Insert(0, propDef.Name);
 			notifyPropNames = notifyPropNames.Distinct().ToList();
-			for (int i = 0; i < notifyPropNames.Count; i++)
-			{
-				string notifyPropName = notifyPropNames[i];
-				if (i < notifyPropNames.Count - 1)
-					il.Append(il.Create(OpCodes.Dup));
-				il.Append(il.Create(OpCodes.Ldarg_0));
-				il.Append(il.Create(OpCodes.Ldstr, notifyPropName));
-				// newobj instance void [System]System.ComponentModel.PropertyChangedEventArgs::.ctor(string)
-				il.Append(il.Create(OpCodes.Newobj, refs.ComponentModelPropertyChangedEventConstructorReference));
-				// callvirt instance void [System]System.ComponentModel.PropertyChangedEventHandler::Invoke(object, class [System]System.ComponentModel.PropertyChangedEventArgs)
-				il.Append(il.Create(OpCodes.Callvirt, refs.ComponentModelPropertyChangedEventHandlerInvokeReference));
-			}
 
-			il.Append(falseLabel);
+			FieldReference eventField;
+			TypeDefinition baseType = typeDef;
+			do
+			{
+				eventField = baseType.Fields.FirstOrDefault(x => x.FieldType.IsPropertyChangedEventHandler());
+				if (eventField != null && baseType != typeDef)
+				{
+					// Patch the event's private field to be protected to make it directly accessible from derived classes
+					// (Private members from external assemblies won't be found anyway.)
+					var eventFieldDef = eventField.Resolve();
+					eventFieldDef.IsFamily = true;
+				}
+				baseType = baseType.BaseType?.Resolve();
+			}
+			while (eventField == null && baseType != null);
+
+			if (eventField != null)
+			{
+				il.Append(il.Create(OpCodes.Ldarg_0));
+				// IL: ldfld class [System]System.ComponentModel.PropertyChangedEventHandler {typeDef}::PropertyChanged
+				il.Append(il.Create(OpCodes.Ldfld, eventField));
+				// C#: if (eventField != null) goto trueLabel
+				il.Append(il.Create(OpCodes.Dup));
+				var trueLabel = il.Create(OpCodes.Nop);
+				il.Append(il.Create(OpCodes.Brtrue, trueLabel));
+
+				il.Append(il.Create(OpCodes.Pop));
+				var falseLabel = il.Create(OpCodes.Nop);
+				il.Append(il.Create(OpCodes.Br, falseLabel));
+
+				il.Append(trueLabel);
+				// Invoke PropertyChanged event through eventField for each property to notify
+				for (int i = 0; i < notifyPropNames.Count; i++)
+				{
+					string notifyPropName = notifyPropNames[i];
+					if (i < notifyPropNames.Count - 1)
+						il.Append(il.Create(OpCodes.Dup));
+					il.Append(il.Create(OpCodes.Ldarg_0));
+					il.Append(il.Create(OpCodes.Ldstr, notifyPropName));
+					// IL: newobj instance void [System]System.ComponentModel.PropertyChangedEventArgs::.ctor(string)
+					il.Append(il.Create(OpCodes.Newobj, refs.ComponentModelPropertyChangedEventConstructorReference));
+					// IL: callvirt instance void [System]System.ComponentModel.PropertyChangedEventHandler::Invoke(object, class [System]System.ComponentModel.PropertyChangedEventArgs)
+					il.Append(il.Create(OpCodes.Callvirt, refs.ComponentModelPropertyChangedEventHandlerInvokeReference));
+				}
+
+				il.Append(falseLabel);
+			}
+			else
+			{
+				// Look for OnPropertyChanged methods that accept either PropertyChangedEventArgs or a string (e.g. ObservableCollection`1)
+				MethodReference onPropertyChangedMethod;
+				baseType = typeDef;
+				do
+				{
+					onPropertyChangedMethod = baseType.Methods
+						.FirstOrDefault(x =>
+							x.Name == "OnPropertyChanged" &&
+							x.Parameters.Count == 1 &&
+							(x.Parameters[0].ParameterType.FullName == "System.ComponentModel.PropertyChangedEventArgs" ||
+							x.Parameters[0].ParameterType == ModuleDefinition.TypeSystem.String) &&
+							x.ReturnType == ModuleDefinition.TypeSystem.Void &&
+							!x.IsStatic);
+					baseType = baseType.BaseType?.Resolve();
+				}
+				while (onPropertyChangedMethod == null && baseType != null);
+				if (onPropertyChangedMethod != null)
+				{
+					// Call OnPropertyChanged method for each property to notify
+					for (int i = 0; i < notifyPropNames.Count; i++)
+					{
+						string notifyPropName = notifyPropNames[i];
+						il.Append(il.Create(OpCodes.Ldarg_0));
+						il.Append(il.Create(OpCodes.Ldstr, notifyPropName));
+						if (onPropertyChangedMethod.Parameters[0].ParameterType != ModuleDefinition.TypeSystem.String)
+						{
+							// IL: newobj instance void [System]System.ComponentModel.PropertyChangedEventArgs::.ctor(string)
+							il.Append(il.Create(OpCodes.Newobj, refs.ComponentModelPropertyChangedEventConstructorReference));
+						}
+						// IL: call(virt) instance void [System]System.ComponentModel.PropertyChangedEventHandler::Invoke(object, class [System]System.ComponentModel.PropertyChangedEventArgs)
+						if (onPropertyChangedMethod.Resolve().IsVirtual)
+							il.Append(il.Create(OpCodes.Callvirt, onPropertyChangedMethod));
+						else
+							il.Append(il.Create(OpCodes.Call, onPropertyChangedMethod));
+					}
+				}
+				else
+				{
+					LogError($"Neither PropertyChanged event field nor OnPropertyChanged method found in type {typeDef.FullName}. Exception ahead…");
+				}
+			}
 
 			// Update dependent commands
 			var notifyCommandNames = dependencies.GetValuesOrEmpty(propDef.Name).Where(n => n.StartsWith("C:")).Select(n => n.Substring(2));
 			foreach (string notifyCommandName in notifyCommandNames.Distinct())
 			{
+				var isNullLabel = il.Create(OpCodes.Nop);
+				var endLabel = il.Create(OpCodes.Nop);
+
 				il.Append(il.Create(OpCodes.Ldarg_0));
 				il.Append(il.Create(OpCodes.Ldfld, backingFields[notifyCommandName]));
+
+				// C#: if (command != null) command.RaiseCanExecuteChanged();
+				il.Append(il.Create(OpCodes.Dup));
+				il.Append(il.Create(OpCodes.Brfalse, isNullLabel));
+
 				il.Append(il.Create(OpCodes.Call, refs.DelegateCommandType.Methods.First(m => m.Name == "RaiseCanExecuteChanged")));
+				il.Append(il.Create(OpCodes.Br, endLabel));
+
+				il.Append(isNullLabel);
+				il.Append(il.Create(OpCodes.Pop));   // Clean up stack
+
+				il.Append(endLabel);
 			}
 
 			il.Append(il.Create(OpCodes.Ret));
@@ -754,7 +918,7 @@ namespace ViewModelKit.Fody
 			var methodDef = new MethodDefinition(
 				"<VMK>InitializeCommands",
 				MethodAttributes.Private,
-				typeDef.Module.TypeSystem.Void);
+				ModuleDefinition.TypeSystem.Void);
 			typeDef.Methods.Add(methodDef);
 			AddCompilerGeneratedAttribute(methodDef);
 
@@ -771,8 +935,8 @@ namespace ViewModelKit.Fody
 				var executeMethod = typeDef.Methods
 					.FirstOrDefault(m => m.Name == $"On{commandName}" &&
 						!m.IsStatic &&
-						m.ReturnType == typeDef.Module.TypeSystem.Void &&
-						(!m.HasParameters || m.Parameters.Count == 1 && m.Parameters[0].ParameterType == typeDef.Module.TypeSystem.Object) &&
+						m.ReturnType == ModuleDefinition.TypeSystem.Void &&
+						(!m.HasParameters || m.Parameters.Count == 1 && m.Parameters[0].ParameterType == ModuleDefinition.TypeSystem.Object) &&
 						!m.HasGenericParameters);
 				if (executeMethod == null &&
 					typeDef.Methods.Any(m => m.Name == $"On{commandName}" &&
@@ -783,8 +947,8 @@ namespace ViewModelKit.Fody
 				var canExecuteMethod = typeDef.Methods
 					.FirstOrDefault(m => m.Name == $"Can{commandName}" &&
 						!m.IsStatic &&
-						m.ReturnType == typeDef.Module.TypeSystem.Boolean &&
-						(!m.HasParameters || m.Parameters.Count == 1 && m.Parameters[0].ParameterType == typeDef.Module.TypeSystem.Object) &&
+						m.ReturnType == ModuleDefinition.TypeSystem.Boolean &&
+						(!m.HasParameters || m.Parameters.Count == 1 && m.Parameters[0].ParameterType == ModuleDefinition.TypeSystem.Object) &&
 						!m.HasGenericParameters);
 				if (canExecuteMethod == null &&
 					typeDef.Methods.Any(m => m.Name == $"Can{commandName}" &&

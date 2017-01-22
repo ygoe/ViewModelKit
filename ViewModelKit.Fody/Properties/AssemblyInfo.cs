@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 [assembly: AssemblyProduct("ViewModelKit.Fody")]
 [assembly: AssemblyTitle("ViewModelKit.Fody")]
-[assembly: AssemblyDescription("Makes WPF ViewModel classes smart by default. Implements INotifyPropertyChanged and DelegateCommands for auto properties, recognises dependent properties, connects property changed handlers. Supports virtual properties with Entity Famework.")]
+[assembly: AssemblyDescription("Makes WPF ViewModel classes smart by default. Implements INotifyPropertyChanged and DelegateCommands for auto properties, recognises dependent properties, connects property changed handlers, triggers validation. Supports virtual properties with Entity Famework.")]
 [assembly: AssemblyCopyright(AssemblyInfo.Copyright)]
 [assembly: AssemblyCompany("unclassified software development")]
 
@@ -24,7 +24,7 @@ using System.Runtime.InteropServices;
 
 public static class AssemblyInfo
 {
-	public const string Version = "1.1";
-	public const string Copyright = "© 2016 Yves Goergen";
+	public const string Version = "1.2";
+	public const string Copyright = "© 2016–2017 Yves Goergen";
 	// NOTE: Also update copyright year in the LICENSE.txt file
 }
