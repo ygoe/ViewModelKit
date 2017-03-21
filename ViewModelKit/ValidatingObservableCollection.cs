@@ -78,6 +78,7 @@ namespace ViewModelKit
 				}
 			}
 			base.ClearItems();
+			OnErrorsChanged(this, null);
 		}
 
 		/// <inheritdoc/>
@@ -99,6 +100,7 @@ namespace ViewModelKit
 				item.ErrorsChanged -= OnErrorsChanged;
 			}
 			base.RemoveItem(index);
+			OnErrorsChanged(this, null);
 		}
 
 		/// <inheritdoc/>
@@ -114,6 +116,7 @@ namespace ViewModelKit
 			{
 				item.ErrorsChanged += OnErrorsChanged;
 			}
+			OnErrorsChanged(this, null);
 		}
 
 		/// <summary>
