@@ -476,8 +476,8 @@ namespace ViewModelKit.Fody
 					!m.IsStatic &&
 					(m.ReturnType == ModuleDefinition.TypeSystem.Void || m.ReturnType == ModuleDefinition.TypeSystem.Boolean) &&
 					m.Parameters.Count == 2 &&
-					m.Parameters[0].ParameterType == propDef.PropertyType &&
-					(m.Parameters[1].ParameterType == propDef.PropertyType || (m.Parameters[1].ParameterType as ByReferenceType)?.ElementType == propDef.PropertyType) &&
+					m.Parameters[0].ParameterType.FullName == propDef.PropertyType.FullName &&
+					(m.Parameters[1].ParameterType.FullName == propDef.PropertyType.FullName || (m.Parameters[1].ParameterType as ByReferenceType)?.ElementType.FullName == propDef.PropertyType.FullName) &&
 					!m.HasGenericParameters);
 			if (changingMethod == null &&
 				typeDef.Methods.Any(m => m.Name == $"On{propDef.Name}Changing" &&
