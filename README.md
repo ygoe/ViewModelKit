@@ -255,6 +255,8 @@ private void CanSave() { /* ... */ }
 
 Denotes that changes to the property value should not raise the ErrorsChanged event for this property or perform validation.
 
+If you use the `PropertyValidationSource` to reuse validation attributes in another class, and that other class does not contain a property of the validated class, an exception will occur when setting the property to a new value. You can use the `DoNotValidate` attribute with the additional property to prevent that exception.
+
 # Provided classes
 
 These classes are defined in the ViewModelKit assembly which is automatically referenced by the NuGet package. This reference will be removed and all referenced classes will be copied into your assembly during compilation, so you do not distribute this assembly.
@@ -329,7 +331,7 @@ public class PersonViewModel : ValidatingViewModelBase
 {
     private Person person;
 
-    protected override object PropertyValidationInstance => person;
+    protected override object PropertyValidationSource => person;
 
     public string FirstName { get; set; }
     public string LastName { get; set; }
