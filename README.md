@@ -26,6 +26,7 @@ For properties:
 * Calls <strong>On<i>PropertyName</i>Changing</strong> methods before the property has changed, providing the old and new value, with the option to reject or alter the new value.
 * Sets the <strong>IsModified</strong> property to true when another property changes, except when <strong>IsLoaded</strong> is false.
 * Raises the PropertyChanged event and calls other handler methods asynchronously (with `SynchronizationContext.Current.Post()`) if the property is <strong>virtual</strong> and the current instance is of a derived type. This allows Entity Framework to update foreign key/navigation properties in the dynamic proxy before the change events are raised.
+* Cleans up text user input for numeric or date values.
 
 For commands:
 
@@ -256,6 +257,26 @@ private void CanSave() { /* ... */ }
 Denotes that changes to the property value should not raise the ErrorsChanged event for this property or perform validation.
 
 If you use the `PropertyValidationSource` to reuse validation attributes in another class, and that other class does not contain a property of the validated class, an exception will occur when setting the property to a new value. You can use the `DoNotValidate` attribute with the additional property to prevent that exception.
+
+### CleanupAttribute
+
+Denotes that the string value assigned to the property should be cleaned up before storing. The cleanup method is specified as argument. This only applies to properties of type `String`.
+
+The following cleanup methods are currently defined:
+
+* CleanupString: Trims white space
+* CleanupInt: Formats integer numbers within the `Int64` range
+* CleanupDouble: Formats floating point numbers within the `Double` range
+* CleanupDecimal: Similar to CleanupDouble but does not use scientific (exponential) notation
+* CleanupDate: Formats a short date
+* CleanupIsoDate: Formats a date in ISO 8601 format (yyyy-mm-dd)
+
+##### Example
+
+```cs
+[Cleanup("CleanupDouble")]
+public string NumericValue { get; set; }
+```
 
 # Provided classes
 

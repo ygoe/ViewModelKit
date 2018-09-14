@@ -703,7 +703,7 @@ namespace ViewModelKit.Fody
 
 				// Remove SynchronizationContext.Current from stack
 				il.Append(il.Create(OpCodes.Pop));
-				
+
 				// ...PropertyChanged(null)
 				il.Append(il.Create(OpCodes.Ldarg_0));
 				il.Append(il.Create(OpCodes.Ldnull));

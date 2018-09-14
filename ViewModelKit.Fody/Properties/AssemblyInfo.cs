@@ -24,7 +24,7 @@ using System.Runtime.InteropServices;
 
 public static class AssemblyInfo
 {
-	public const string Version = "1.2.1";
-	public const string Copyright = "© 2016–2017 Yves Goergen";
+	public const string Version = "1.2.2";
+	public const string Copyright = "© 2016–2018 Yves Goergen";
 	// NOTE: Also update copyright year in the LICENSE.txt file
 }

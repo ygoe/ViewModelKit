@@ -63,6 +63,27 @@ namespace ViewModelKit
 		}
 
 		/// <summary>
+		/// Cleans up a user input string for a decimal type property.
+		/// </summary>
+		/// <param name="str">The text entered by the user.</param>
+		/// <returns>The cleaned string value.</returns>
+		public static string CleanupDecimal(string str)
+		{
+			if (str == null) return null;
+			str = str.Trim();
+			if (str.Length == 0) return "";
+			try
+			{
+				decimal d = Convert.ToDecimal(str);
+				return Convert.ToString(d);
+			}
+			catch
+			{
+				return str;
+			}
+		}
+
+		/// <summary>
 		/// Cleans up a user input string for a local date value.
 		/// </summary>
 		/// <param name="str">The text entered by the user.</param>
@@ -84,7 +105,7 @@ namespace ViewModelKit
 		}
 
 		/// <summary>
-		/// Cleans up a user input string for an ISO date value.
+		/// Cleans up a user input string for an ISO 8601 date value.
 		/// </summary>
 		/// <param name="str">The text entered by the user.</param>
 		/// <returns>The cleaned string value.</returns>
